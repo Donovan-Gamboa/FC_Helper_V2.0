@@ -82,35 +82,54 @@ class JobManagementApp:
         self.file_path = "jobs.xlsx"  # File path for Excel
 
     def load_jobs_from_excel(self, file_path):
+        # Load data from Excel file
         self.df = pd.read_excel(file_path)
+
+        # Convert 'Production Date' column to datetime
+        self.df['Production Date'] = pd.to_datetime(self.df['Production Date'], format="%Y-%m-%d")
+        
+        # Calculate 'Days in Shop'
+        current_date = pd.Timestamp.now().normalize()  # Remove time component
+        self.df['Days in Shop'] = (current_date - self.df['Production Date']).dt.days
+        
+        # Ensure 'Days in Shop' is an integer
+        self.df['Days in Shop'] = self.df['Days in Shop'].astype(int)
+
+        self.df['Production Date'] = self.df['Production Date'].dt.strftime("%Y-%m-%d")
+
+        # Update Treeview
         self.update_treeview()
 
     def on_job_select(self, event):
-        selected_item = self.job_tree.selection()[0]
-        selected_job = self.job_tree.item(selected_item, "values")
-        job_number = selected_job[6]  # Assuming Job Number is in the 7th column
+        selected_items = self.job_tree.selection()  # Get selected item IDs
+        if not selected_items:  # Check if no items are selected
+            return
 
-        try:
-            job_status = self.df[self.df["Job Number"] == job_number]["Status"].values[0]
-        except IndexError:
-            job_status = "Unknown"
+        selected_item = selected_items[0]  # Get the first selected item ID
+        job = self.job_tree.item(selected_item, 'values')  # Get job data
 
-        self.sign_off_date_var.set(selected_job[0])
-        self.name_var.set(selected_job[1])
-        self.phone_number_var.set(selected_job[2])
-        self.location_var.set(selected_job[3])
-        self.production_date_var.set(selected_job[4])
-        self.price_var.set(selected_job[5])
-        self.notes_var.set(selected_job[6])
-        self.job_number_var.set(selected_job[7])
+        # Populate Job Details Section
+        for i, label in enumerate(self.labels):
+            if label == "Notes":
+                self.entries[label].config(state=tk.NORMAL)
+                self.entries[label].delete(1.0, tk.END)  # Clear the existing text
+                self.entries[label].insert(tk.END, job[i])
+                self.entries[label].config(state=tk.DISABLED)
+            else:
+                self.entries[label].config(state=tk.NORMAL)
+                self.entries[label].delete(0, tk.END)  # Clear the existing text
+                self.entries[label].insert(0, job[i])
+                self.entries[label].config(state=tk.DISABLED)
 
-        if job_status == "Done":
-            self.mark_done_button.config(state=tk.DISABLED)
-            self.mark_not_done_button.config(state=tk.NORMAL)
-        else:
-            self.mark_done_button.config(state=tk.NORMAL)
-            self.mark_not_done_button.config(state=tk.DISABLED)
+        # Enable Edit and Delete buttons and disable Save button
+        self.edit_button.config(state=tk.NORMAL)
+        self.save_button.config(state=tk.DISABLED)
+        self.delete_button.config(state=tk.NORMAL)
 
+        # Get the job status and update buttons
+        job_number = job[self.labels.index("Job Number")]
+        job_status = self.df[self.df["Job Number"] == job_number]["Status"].values[0]
+        self.update_status_buttons(job_status)
 
     def update_status_buttons(self, status):
         if status == "Done":
@@ -143,6 +162,8 @@ class JobManagementApp:
         
         # Save to Excel
         self.save_to_excel()
+
+        self.load_jobs_from_excel("jobs.xlsx")
         
         # Update Treeview
         self.update_treeview()
