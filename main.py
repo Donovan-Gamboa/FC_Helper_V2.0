@@ -1,6 +1,10 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 import pandas as pd
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfgen import canvas
+import textwrap
+
 
 class JobManagementApp:
     def __init__(self, root):
@@ -11,7 +15,6 @@ class JobManagementApp:
         self.menu_bar = tk.Menu(self.root)
         self.file_menu = tk.Menu(self.menu_bar, tearoff=0)
         self.file_menu.add_command(label="Add New Job", command=self.open_add_job_dialog)
-        self.file_menu.add_command(label="Save", command=self.save_job)
         self.file_menu.add_command(label="Print Undone Jobs to PDF", command=self.print_pdf)
         self.file_menu.add_separator()
         self.file_menu.add_command(label="Exit", command=self.root.quit)
@@ -78,6 +81,9 @@ class JobManagementApp:
         # Footer Section
         self.status_bar = tk.Label(self.root, text="Status: Ready", bd=1, relief=tk.SUNKEN, anchor=tk.W)
         self.status_bar.pack(side=tk.BOTTOM, fill=tk.X)
+
+        self.job_tree.tag_configure('done', background='lightgray')
+        self.job_tree.tag_configure('not_done', background='white')
 
         self.file_path = "jobs.xlsx"  # File path for Excel
 
@@ -260,21 +266,102 @@ class JobManagementApp:
         self.df.to_excel(self.file_path, index=False)
 
     def update_treeview(self):
+        def get_gradient_color(days):
+            if days <= 45:
+                red = int((days / 45) * 255)
+                green = 255
+                blue = 0
+                return f'#{red:02x}{green:02x}{blue:02x}'
+            elif (days > 45) and (days <= 90):
+                red = 255
+                green = 255 - int(((days - 45) / 45) * 255)
+                blue = 0
+                return f'#{red:02x}{green:02x}{blue:02x}'
+            elif (days >= 90):
+                return '#ff0000'
+            
+
         # Clear the Treeview
         for item in self.job_tree.get_children():
             self.job_tree.delete(item)
 
-        # Insert updated data
-        for _, row in self.df.iterrows():
-            self.job_tree.insert("", tk.END, values=row.tolist())
+        # Sort DataFrame by 'Status' and then by 'Days in Shop' in ascending order
+        self.df['Status'] = pd.Categorical(self.df['Status'], categories=['Not Done', 'Done'], ordered=True)
+        sorted_df = self.df.sort_values(by=['Status', 'Days in Shop'], ascending=[True, True])
+
+        # Insert updated data and color-code based on status
+        for _, row in sorted_df.iterrows():
+            values = row.tolist()
+            days_in_shop = row['Days in Shop']
+            color = get_gradient_color(days_in_shop)
+            tags = (f'days_{days_in_shop}',)
+            self.job_tree.tag_configure(f'days_{days_in_shop}', background=color)
+            if row['Status'] == 'Done':
+                tags = ('done',)
+            self.job_tree.insert("", tk.END, values=values, tags=tags)
+        
+        # Apply tag configuration to gray out 'Done' jobs
+        self.job_tree.tag_configure('done', foreground='gray')
 
     def open_add_job_dialog(self):
         add_job_dialog = AddJobDialog(self)
         self.root.wait_window(add_job_dialog.top)
 
     def print_pdf(self):
-        # Implement your PDF printing functionality here
-        pass
+        # Create a PDF with reportlab
+        c = canvas.Canvas("Undone_Jobs_Report.pdf", pagesize=letter)
+        width, height = letter
+        c.setFont("Helvetica", 12)
+
+        # Add a title
+        c.drawString(30, height - 30, "Undone Jobs Report")
+
+        y = height - 60  # Starting y position below the title
+        for _, row in self.df[self.df["Status"] == "Not Done"].iterrows():
+            job_details = [
+                ("Job Number", row["Job Number"], (1, 1, 0)),  # Highlight in yellow
+                ("Name", row["Name"], None),
+                ("Phone Number", row["Phone Number"], None),
+                ("Location", row["Location"], None),
+                ("Sign Off Date", row["Sign Off Date"], None),
+                ("Production Date", row["Production Date"], None),
+                ("Price", row["Price"], None),
+                ("Notes", row["Notes"], None),
+                ("Days in Shop", row["Days in Shop"], (1, 0, 0))  # Highlight in red
+            ]
+
+            max_lines = 0
+            for label, value, color in job_details:
+                wrapped_text = textwrap.fill(str(value), width=100)  # Wrap text if necessary
+                lines = wrapped_text.split("\n")
+                
+                if color:
+                    c.setFillColorRGB(*color)
+                    c.rect(28, y - 2, width - 56, 14 * len(lines) + 2, fill=1)
+                    c.setFillColorRGB(0, 0, 0)  # Black text
+                    c.setFont("Helvetica-Bold", 12)
+                else:
+                    c.setFont("Helvetica", 12)
+
+                for i, line in enumerate(lines):
+                    if i == 0:
+                        c.drawString(30, y, f"{label}: {line}")
+                    else:
+                        c.drawString(30 + len(label) * 6 + 5, y, line)
+                    y -= 14
+                c.setFillColorRGB(0, 0, 0)  # Reset to black text after each job detail
+                y -= 2  # Additional space between job details for better readability
+                max_lines = max(max_lines, len(lines))
+
+            y -= 30  # Add extra space between jobs
+
+            if y < 40:  # Check if the remaining space is less than a threshold
+                c.showPage()  # Create a new page
+                y = height - 30
+                c.setFont("Helvetica", 12)  # Reset font to ensure continuity
+
+        c.save()
+        messagebox.showinfo("Success", "PDF generated successfully!")
 
 class AddJobDialog:
     def __init__(self, parent):
@@ -388,3 +475,7 @@ if __name__ == "__main__":
     root = tk.Tk()
     app = JobManagementApp(root)
     root.mainloop()
+
+
+#Price not Needed for PDF
+#Grid for PDF if possible
