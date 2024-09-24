@@ -1,9 +1,11 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 import pandas as pd
-from reportlab.lib.pagesizes import letter
-from reportlab.pdfgen import canvas
-import textwrap
+from reportlab.lib.pagesizes import landscape, letter
+from reportlab.platypus import Table, TableStyle, SimpleDocTemplate, Paragraph
+from reportlab.lib import colors
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.units import inch
 
 
 class JobManagementApp:
@@ -31,7 +33,7 @@ class JobManagementApp:
         self.job_list_frame = tk.Frame(self.root)
         self.job_list_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         
-        self.columns = ("Sign Off Date", "Name", "Phone Number", "Location", "Production Date", "Price", "Notes", "Job Number", "Days in Shop", "Status")
+        self.columns = ("Sign Off Date", "Name", "Phone Number", "Location", "Production Date", "Price", "Notes", "Job Number", "Status", "Days in Shop")
         self.job_tree = ttk.Treeview(self.job_list_frame, columns=self.columns, show="headings")
         for col in self.columns:
             self.job_tree.heading(col, text=col)
@@ -93,6 +95,7 @@ class JobManagementApp:
 
         # Convert 'Production Date' column to datetime
         self.df['Production Date'] = pd.to_datetime(self.df['Production Date'], format="%Y-%m-%d")
+        self.df['Sign Off Date'] = pd.to_datetime(self.df['Sign Off Date'], format="%Y-%m-%d").dt.normalize()  # Remove time component
         
         # Calculate 'Days in Shop'
         current_date = pd.Timestamp.now().normalize()  # Remove time component
@@ -102,6 +105,11 @@ class JobManagementApp:
         self.df['Days in Shop'] = self.df['Days in Shop'].astype(int)
 
         self.df['Production Date'] = self.df['Production Date'].dt.strftime("%Y-%m-%d")
+        self.df['Sign Off Date'] = self.df['Sign Off Date'].dt.strftime("%Y-%m-%d")
+
+        self.df['Notes'] = self.df['Notes'].fillna("")
+        self.df['Job Number'] = self.df['Job Number'].fillna("")
+
 
         # Update Treeview
         self.update_treeview()
@@ -134,7 +142,7 @@ class JobManagementApp:
 
         # Get the job status and update buttons
         job_number = job[self.labels.index("Job Number")]
-        job_status = self.df[self.df["Job Number"] == job_number]["Status"].values[0]
+        job_status = self.df[self.df["Job Number"].astype(str).str.strip() == job_number]["Status"].values[0]
         self.update_status_buttons(job_status)
 
     def update_status_buttons(self, status):
@@ -164,7 +172,7 @@ class JobManagementApp:
         updated_values = {label: self.entries[label].get(1.0, tk.END).strip() if label == "Notes" else self.entries[label].get() for label in self.labels}
         
         # Update DataFrame
-        self.df.loc[self.df["Job Number"] == job_number, updated_values.keys()] = updated_values.values()
+        self.df.loc[self.df["Job Number"].astype(str).str.strip() == job_number, updated_values.keys()] = updated_values.values()
         
         # Save to Excel
         self.save_to_excel()
@@ -190,12 +198,12 @@ class JobManagementApp:
         job_number = self.job_tree.item(selected_item, 'values')[self.labels.index("Job Number")]
 
         # Check the current status
-        current_status = self.df[self.df["Job Number"] == job_number]["Status"].values[0]
+        current_status = self.df[self.df["Job Number"].astype(str).str.strip() == job_number]["Status"].values[0]
         if current_status == "Done":
             self.status_bar.config(text="Status: Job already marked as Done")
             return
 
-        self.df.loc[self.df["Job Number"] == job_number, "Status"] = "Done"
+        self.df.loc[self.df["Job Number"].astype(str).str.strip() == job_number, "Status"] = "Done"
         self.update_status_buttons("Done")
         self.status_bar.config(text="Status: Job marked as Done")
 
@@ -213,12 +221,12 @@ class JobManagementApp:
         job_number = self.job_tree.item(selected_item, 'values')[self.labels.index("Job Number")]
 
         # Check the current status
-        current_status = self.df[self.df["Job Number"] == job_number]["Status"].values[0]
+        current_status = self.df[self.df["Job Number"].astype(str).str.strip() == job_number]["Status"].values[0]
         if current_status == "Not Done":
             self.status_bar.config(text="Status: Job already marked as Not Done")
             return
 
-        self.df.loc[self.df["Job Number"] == job_number, "Status"] = "Not Done"
+        self.df.loc[self.df["Job Number"].astype(str).str.strip() == job_number, "Status"] = "Not Done"
         self.update_status_buttons("Not Done")
         self.status_bar.config(text="Status: Job marked as Not Done")
 
@@ -238,7 +246,7 @@ class JobManagementApp:
         # Confirmation dialog
         response = messagebox.askyesno("Delete Job", f"Are you sure you want to delete the job with Job Number {job_number}?")
         if response:  # If user confirms
-            self.df = self.df[self.df["Job Number"] != job_number]
+            self.df = self.df[self.df["Job Number"].astype(str).str.strip() != job_number]
             self.save_to_excel()
             self.update_treeview()
             self.clear_job_details()  # Clear job details after deletion
@@ -308,59 +316,71 @@ class JobManagementApp:
         self.root.wait_window(add_job_dialog.top)
 
     def print_pdf(self):
-        # Create a PDF with reportlab
-        c = canvas.Canvas("Undone_Jobs_Report.pdf", pagesize=letter)
-        width, height = letter
-        c.setFont("Helvetica", 12)
+        # Create a PDF with landscape orientation and setup
+        pdf_file = "Undone_Jobs_Report.pdf"
+        doc = SimpleDocTemplate(pdf_file, pagesize=landscape(letter))
 
-        # Add a title
-        c.drawString(30, height - 30, "Undone Jobs Report")
+        # Define styles for the table
+        styles = getSampleStyleSheet()
+        normal_style = styles["Normal"]
 
-        y = height - 60  # Starting y position below the title
-        for _, row in self.df[self.df["Status"] == "Not Done"].iterrows():
+        # Table data: column headers
+        data = [["Job Number", "Name", "Phone Number", "Location", "Sign Off Date", "Production Date", "Notes", "Days in Shop"]]
+
+        sorted_df = self.df[self.df["Status"] == "Not Done"].sort_values(by="Days in Shop")
+
+
+        # Add each job's details to the table with text wrapping
+        for _, row in sorted_df.iterrows():
             job_details = [
-                ("Job Number", row["Job Number"], (1, 1, 0)),  # Highlight in yellow
-                ("Name", row["Name"], None),
-                ("Phone Number", row["Phone Number"], None),
-                ("Location", row["Location"], None),
-                ("Sign Off Date", row["Sign Off Date"], None),
-                ("Production Date", row["Production Date"], None),
-                ("Price", row["Price"], None),
-                ("Notes", row["Notes"], None),
-                ("Days in Shop", row["Days in Shop"], (1, 0, 0))  # Highlight in red
+                Paragraph(str(row["Job Number"]), normal_style),
+                Paragraph(str(row["Name"]), normal_style),
+                Paragraph(str(row["Phone Number"]), normal_style),
+                Paragraph(str(row["Location"]), normal_style),
+                Paragraph(str(row["Sign Off Date"]), normal_style),
+                Paragraph(str(row["Production Date"]), normal_style),
+                Paragraph(str(row["Notes"]), normal_style),
+                Paragraph(str(row["Days in Shop"]), normal_style)
             ]
+            data.append(job_details)
 
-            max_lines = 0
-            for label, value, color in job_details:
-                wrapped_text = textwrap.fill(str(value), width=100)  # Wrap text if necessary
-                lines = wrapped_text.split("\n")
-                
-                if color:
-                    c.setFillColorRGB(*color)
-                    c.rect(28, y - 2, width - 56, 14 * len(lines) + 2, fill=1)
-                    c.setFillColorRGB(0, 0, 0)  # Black text
-                    c.setFont("Helvetica-Bold", 12)
-                else:
-                    c.setFont("Helvetica", 12)
+        # Create the table
+        table = Table(data, colWidths=[60, 110, 80, 90, 80, 80, 200, 60])  # Adjust column widths as necessary
 
-                for i, line in enumerate(lines):
-                    if i == 0:
-                        c.drawString(30, y, f"{label}: {line}")
-                    else:
-                        c.drawString(30 + len(label) * 6 + 5, y, line)
-                    y -= 14
-                c.setFillColorRGB(0, 0, 0)  # Reset to black text after each job detail
-                y -= 2  # Additional space between job details for better readability
-                max_lines = max(max_lines, len(lines))
+        # Style the table
+        style = TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),  # Header background color
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),  # Header text color
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),  # Center alignment
+            ('VALIGN', (0, 0), (-1, -1), 'TOP'),  # Top align for wrapping content
+            ('GRID', (0, 0), (-1, -1), 1, colors.black),  # Grid lines
+            ('FONTSIZE', (0, 0), (-1, -1), 10),  # Font size for all cells
+            ('BACKGROUND', (0, 1), (-1, -1), colors.beige),  # Row background color
+            ('TEXTCOLOR', (0, 1), (-1, -1), colors.black),  # Normal text color
+        ])
 
-            y -= 30  # Add extra space between jobs
+        # Apply the gradient for "Days in Shop" based on the values
+        for i in range(1, len(data)):
+            days_in_shop = int(sorted_df.iloc[i - 1]["Days in Shop"])
 
-            if y < 40:  # Check if the remaining space is less than a threshold
-                c.showPage()  # Create a new page
-                y = height - 30
-                c.setFont("Helvetica", 12)  # Reset font to ensure continuity
+            if days_in_shop <= 30:
+                bg_color = colors.green
+            elif (days_in_shop > 30) and (days_in_shop <= 70):
+                bg_color = colors.yellow
+            elif (days_in_shop >= 70):
+                bg_color = colors.red
 
-        c.save()
+            style.add('BACKGROUND', (7, i), (7, i), bg_color)
+        
+        table.setStyle(style)
+
+        # Allow the table to split across multiple pages
+        elements = [table]
+
+        # Build the document (multi-page support)
+        doc.build(elements)
+
+        # Notify user that PDF generation is complete
         messagebox.showinfo("Success", "PDF generated successfully!")
 
 class AddJobDialog:
@@ -443,6 +463,11 @@ class AddJobDialog:
             "Job Number": self.entries["Job"].get().strip(),
             "Status": "Not Done"
         }
+
+        if not new_job["Notes"]:
+            new_job["Notes"] = ""  # Set to empty string instead of NaN
+        if not new_job["Job Number"]:
+            new_job["Job Number"] = ""  # Set to empty string instead of NaN
 
         # Validate the dates
         try:
