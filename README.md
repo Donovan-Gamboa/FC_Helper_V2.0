@@ -28,7 +28,7 @@ This project is a simple GUI-based job management application built using Python
 ## Usage
 1. Run the script:
    ```bash
-   python job_management_app.py
+   python main.py
    ```
 2. The main window will open with a job list and detailed view for job management.
 
@@ -41,7 +41,7 @@ This project is a simple GUI-based job management application built using Python
 
 ## File Descriptions
 - **jobs.xlsx**: The Excel file where job data is stored and loaded.
-- **job_management_app.py**: The main Python file containing the code for the Job Management System.
+- **main.py**: The main Python file containing the code for the Job Management System.
 
 ## PDF Export
 The app includes a feature to export all jobs that are not marked as done into a PDF. The PDF lists each job's details and is generated in landscape format.
